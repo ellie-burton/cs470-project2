@@ -1,10 +1,5 @@
-"""
-Algorithm modules (build_frames / validate_result).
+"""Algorithm modules (build_frames / validate_result)."""
 
-Hungarian (min/max assignment):
-    - See `algorithms.hungarian`
-"""
+from . import dinic, gale_shapley, hungarian
 
-from . import hungarian
-
-__all__ = ["hungarian"]
+__all__ = ["dinic", "gale_shapley", "hungarian"]

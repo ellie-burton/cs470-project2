@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import time
 from typing import Any
 
@@ -274,10 +275,21 @@ def _editable_dinic(preset_payload: dict[str, Any]) -> tuple[dict[str, Any], dic
     nodes = (data.get("graph") or {}).get("nodes") or []
     edges = (data.get("graph") or {}).get("edges") or []
 
-    st.markdown("#### Nodes")
-    ndf = pd.DataFrame(nodes if nodes else [{"id": "s", "x": 60, "y": 120, "label": "s"}])
-    ndf = st.data_editor(ndf, width="stretch", num_rows="dynamic", key="d_nodes")
-    node_ids = [str(x) for x in ndf.get("id", []).tolist() if str(x).strip()]
+    show_nodes = st.checkbox("Show node editor", value=False, key="d_show_nodes")
+    if show_nodes:
+        st.caption(
+            "Click **+** to create a new node. Enter a name and x/y coordinates "
+            "for placement in the graph. Each node must have at least one edge "
+            "connecting it in the Edges table below."
+        )
+        node_rows = [{"name": n.get("label") or n.get("id", ""), "x": n.get("x", 0), "y": n.get("y", 0)} for n in nodes] if nodes else [{"name": "s", "x": 60, "y": 120}]
+        ndf = pd.DataFrame(node_rows)
+        ndf = st.data_editor(ndf, width="stretch", num_rows="dynamic", key="d_nodes")
+        node_ids = [str(x).strip() for x in ndf.get("name", []).tolist() if str(x).strip()]
+    else:
+        ndf = pd.DataFrame([{"name": n.get("label") or n.get("id", ""), "x": n.get("x", 0), "y": n.get("y", 0)} for n in nodes] if nodes else [{"name": "s", "x": 60, "y": 120}])
+        node_ids = [str(x).strip() for x in ndf.get("name", []).tolist() if str(x).strip()]
+
     if not node_ids:
         node_ids = ["s", "t"]
 
@@ -285,22 +297,27 @@ def _editable_dinic(preset_payload: dict[str, Any]) -> tuple[dict[str, Any], dic
     with c1:
         source = st.selectbox("Source", node_ids, index=0, key="d_source")
     with c2:
-        sink = st.selectbox("Sink", node_ids, index=min(1, len(node_ids) - 1), key="d_sink")
+        sink_idx = min(1, len(node_ids) - 1)
+        sink_default = data.get("sink", "")
+        if sink_default in node_ids:
+            sink_idx = node_ids.index(sink_default)
+        sink = st.selectbox("Sink", node_ids, index=sink_idx, key="d_sink")
 
     st.markdown("#### Edges")
     edf = pd.DataFrame(edges if edges else [{"source": "s", "target": "t", "capacity": 1}])
     edf = st.data_editor(edf, width="stretch", num_rows="dynamic", key="d_edges")
+
     clean_nodes: list[dict[str, Any]] = []
     for _, row in ndf.fillna("").iterrows():
-        nid = str(row.get("id", "")).strip()
-        if not nid:
+        name = str(row.get("name", "")).strip()
+        if not name:
             continue
         clean_nodes.append(
             {
-                "id": nid,
+                "id": name,
                 "x": float(row.get("x", 0) or 0),
                 "y": float(row.get("y", 0) or 0),
-                "label": str(row.get("label", nid) or nid),
+                "label": name,
             }
         )
     clean_edges: list[dict[str, Any]] = []
@@ -313,7 +330,7 @@ def _editable_dinic(preset_payload: dict[str, Any]) -> tuple[dict[str, Any], dic
     return {"source": source, "sink": sink, "graph": {"nodes": clean_nodes, "edges": clean_edges}}, {}
 
 
-def _build_graph_figure(frame: Frame) -> go.Figure | None:
+def _build_graph_figure(frame: Frame, *, show_level_badges: bool = False) -> go.Figure | None:
     g = frame.graph or {}
     nodes = g.get("nodes") or []
     if not nodes:
@@ -321,6 +338,16 @@ def _build_graph_figure(frame: Frame) -> go.Figure | None:
     pos = {str(n["id"]): (float(n.get("x", 0)), float(n.get("y", 0)), str(n.get("label", n["id"]))) for n in nodes}
     highlighted_nodes = set(g.get("highlighted_nodes") or [])
     highlighted_edges = {tuple(e) for e in (g.get("highlighted_edges") or [])}
+    is_directed = bool(g.get("directed", False))
+    meta = frame.meta or {}
+    node_levels: dict[str, int] = meta.get("node_levels") or {}
+    bn_raw = meta.get("bottleneck_edge") or []
+    bottleneck_edge = tuple(bn_raw) if len(bn_raw) == 2 else ()
+
+    # Track which (u,v) pairs exist so we can detect bidirectional edges
+    edge_set: set[tuple[str, str]] = set()
+    for e in g.get("edges") or []:
+        edge_set.add((str(e.get("source")), str(e.get("target"))))
 
     fig = go.Figure()
     for e in g.get("edges") or []:
@@ -330,9 +357,18 @@ def _build_graph_figure(frame: Frame) -> go.Figure | None:
         x0, y0, _ = pos[u]
         x1, y1, _ = pos[v]
         kind = str(e.get("kind", "normal"))
+        is_admissible = bool(e.get("admissible", False))
         base_color = "#44d17a" if kind == "engaged" else ("#f6a623" if kind == "proposal" else "#7aa2f7")
-        width = 4 if (u, v) in highlighted_edges else 2
-        color = "#facc15" if (u, v) in highlighted_edges else base_color
+        if is_admissible:
+            base_color = "#38bdf8"
+        is_bottleneck = bottleneck_edge == (u, v)
+        width = 5 if is_bottleneck else (4 if (u, v) in highlighted_edges else (3 if is_admissible else 2))
+        if is_bottleneck:
+            color = "#ef4444"
+        elif (u, v) in highlighted_edges:
+            color = "#facc15"
+        else:
+            color = base_color
         fig.add_trace(
             go.Scatter(
                 x=[x0, x1],
@@ -344,17 +380,65 @@ def _build_graph_figure(frame: Frame) -> go.Figure | None:
                 showlegend=False,
             )
         )
+        if is_directed:
+            dx, dy = x1 - x0, y1 - y0
+            length = math.sqrt(dx * dx + dy * dy)
+            if length > 0:
+                # atan2(dx, -dy) gives clockwise angle from north (screen-up)
+                # which is what Plotly marker.angle expects with reversed y-axis
+                angle_deg = math.degrees(math.atan2(dx, -dy))
+                arrow_size = max(10, width * 3)
+                for frac in (0.35, 0.7):
+                    fig.add_trace(
+                        go.Scatter(
+                            x=[x0 + dx * frac],
+                            y=[y0 + dy * frac],
+                            mode="markers",
+                            marker={
+                                "symbol": "triangle-up",
+                                "size": arrow_size,
+                                "color": color,
+                                "angle": angle_deg,
+                                "line": {"width": 0},
+                            },
+                            hoverinfo="skip",
+                            showlegend=False,
+                        )
+                    )
         if e.get("label"):
-            fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2, text=str(e["label"]), showarrow=False, font={"size": 11, "color": "#d1d5db"})
+            dx, dy = x1 - x0, y1 - y0
+            length = math.sqrt(dx * dx + dy * dy)
+            label_offset = 12
+            # For bidirectional edges, push labels to opposite sides
+            has_reverse = (v, u) in edge_set
+            if has_reverse and u > v:
+                label_offset = -label_offset
+            mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+            if length > 0:
+                nx = -dy / length * label_offset
+                ny = dx / length * label_offset
+            else:
+                nx, ny = 0, label_offset
+            fig.add_annotation(
+                x=mx + nx, y=my + ny, text=f"<b>{e['label']}</b>", showarrow=False,
+                font={"size": 15, "color": "black"},
+                bgcolor="rgba(255,255,255,0.85)", borderpad=2,
+            )
 
+    has_badges = show_level_badges and bool(node_levels)
+    base_size = 44 if has_badges else 28
+    hl_size = 52 if has_badges else 36
     xs, ys, labels, colors, sizes = [], [], [], [], []
     for nid, (x, y, label) in pos.items():
         xs.append(x)
         ys.append(y)
-        labels.append(label)
+        display = label
+        if show_level_badges and nid in node_levels:
+            display = f"{label}<br><sub>L{node_levels[nid]}</sub>"
+        labels.append(display)
         hl = nid in highlighted_nodes
         colors.append("#facc15" if hl else "#1f2937")
-        sizes.append(24 if hl else 18)
+        sizes.append(hl_size if hl else base_size)
     fig.add_trace(
         go.Scatter(
             x=xs,
@@ -362,8 +446,8 @@ def _build_graph_figure(frame: Frame) -> go.Figure | None:
             mode="markers+text",
             text=labels,
             textposition="middle center",
-            marker={"size": sizes, "color": colors, "line": {"color": "#9ca3af", "width": 1}},
-            textfont={"color": "white", "size": 11},
+            marker={"size": sizes, "color": colors, "line": {"color": "#9ca3af", "width": 2}},
+            textfont={"color": "white", "size": 13},
             hoverinfo="skip",
             showlegend=False,
         )
@@ -371,7 +455,7 @@ def _build_graph_figure(frame: Frame) -> go.Figure | None:
     fig.update_layout(
         template="plotly_dark",
         margin={"l": 10, "r": 10, "t": 20, "b": 10},
-        height=420,
+        height=480,
         xaxis={"visible": False},
         yaxis={"visible": False, "autorange": "reversed"},
     )
@@ -503,6 +587,16 @@ def main() -> None:
             with top_r:
                 speed = st.slider("Animation speed", min_value=0.25, max_value=4.0, value=1.0, step=0.25, key=f"{algo_key}_speed")
 
+            # Auto-reload editor data when preset selection changes
+            prev_key = f"{algo_key}_prev_preset"
+            if st.session_state.get(prev_key) != preset_name:
+                st.session_state[prev_key] = preset_name
+                data_key = {"hungarian": "h_data", "gale_shapley": "gs_data", "dinic": "d_data"}.get(algo_key)
+                if data_key:
+                    st.session_state[data_key] = {}
+                if algo_key == "gale_shapley":
+                    st.session_state["gs_rank_version"] = int(st.session_state.get("gs_rank_version", 0)) + 1
+
             preset_payload = copy.deepcopy(presets[preset_name])
             preset_cfg = dict(preset_payload.pop("__config__", {}) or {})
 
@@ -612,14 +706,48 @@ def main() -> None:
                         st.plotly_chart(mfig, width="stretch")
                     else:
                         st.info("No matrix for this frame.")
+            elif algo_key == "dinic":
+                g_col, e_col = st.columns([2.2, 1])
+                with g_col:
+                    st.markdown("### Flow Graph")
+                    gfig = _build_graph_figure(frame, show_level_badges=True)
+                    if gfig is not None:
+                        st.plotly_chart(gfig, width="stretch")
+                    else:
+                        st.info("No graph for this frame.")
+                with e_col:
+                    d_meta = frame.meta or {}
+                    cur_flow = d_meta.get("current_flow")
+                    if cur_flow is not None:
+                        st.metric("Current Flow", int(cur_flow))
+                    bfs_round = d_meta.get("bfs_round")
+                    if bfs_round is not None:
+                        st.markdown(f"**BFS Round:** {bfs_round}")
+                    st.markdown("### Explanation")
+                    phase = _frame_phase_label(frame)
+                    if phase:
+                        st.markdown(f"**Phase:** `{phase}`")
+                    st.write(frame.explanation)
+                    st.markdown("### Legend")
+                    for item in (frame.legend or {}).get("items") or []:
+                        st.markdown(f"- {item}")
             else:
-                st.markdown("### Flow Graph")
-                gfig = _build_graph_figure(frame)
-                if gfig is not None:
-                    st.plotly_chart(gfig, width="stretch")
-                else:
-                    st.info("No graph for this frame.")
-            if algo_key != "hungarian":
+                left, right = st.columns([2, 1])
+                with left:
+                    st.markdown("### Graph")
+                    gfig = _build_graph_figure(frame)
+                    if gfig is not None:
+                        st.plotly_chart(gfig, width="stretch")
+                    else:
+                        st.info("No graph for this frame.")
+                with right:
+                    st.markdown("### Preference Matrix")
+                    mfig = _build_matrix_figure(frame)
+                    if mfig is not None:
+                        st.plotly_chart(mfig, width="stretch")
+                    else:
+                        st.info("No matrix for this frame.")
+            if algo_key not in ("hungarian", "dinic"):
                 st.markdown("### Explanation")
                 phase = _frame_phase_label(frame)
                 if phase:

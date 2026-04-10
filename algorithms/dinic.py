@@ -21,9 +21,8 @@ from typing import Any
 
 from src.models import Frame, ValidationReport
 
-# Curated presets for demos (multi-level BFS, multiple augments).
 PRESETS: dict[str, dict[str, Any]] = {
-    "dinic_small": {
+    "Small (s \u2192 t, 4 nodes)": {
         "source": "s",
         "sink": "t",
         "graph": {
@@ -42,41 +41,50 @@ PRESETS: dict[str, dict[str, Any]] = {
             ],
         },
     },
-    "dinic_layered": {
+    "Extended (s \u2192 f, 5 nodes)": {
         "source": "s",
-        "sink": "t",
+        "sink": "f",
         "graph": {
             "nodes": [
-                {"id": "s", "x": 40, "y": 140, "label": "s"},
-                {"id": "1", "x": 120, "y": 80, "label": "1"},
-                {"id": "2", "x": 120, "y": 200, "label": "2"},
-                {"id": "3", "x": 220, "y": 140, "label": "3"},
-                {"id": "t", "x": 320, "y": 140, "label": "t"},
+                {"id": "s", "x": 60, "y": 120, "label": "s"},
+                {"id": "a", "x": 180, "y": 60, "label": "a"},
+                {"id": "b", "x": 180, "y": 180, "label": "b"},
+                {"id": "t", "x": 300, "y": 120, "label": "t"},
+                {"id": "f", "x": 400, "y": 120, "label": "f"},
             ],
             "edges": [
-                {"source": "s", "target": "1", "capacity": 8},
-                {"source": "s", "target": "2", "capacity": 8},
-                {"source": "1", "target": "2", "capacity": 3},
-                {"source": "1", "target": "3", "capacity": 5},
-                {"source": "2", "target": "3", "capacity": 5},
-                {"source": "3", "target": "t", "capacity": 9},
+                {"source": "s", "target": "a", "capacity": 12},
+                {"source": "s", "target": "b", "capacity": 8},
+                {"source": "a", "target": "b", "capacity": 2},
+                {"source": "a", "target": "t", "capacity": 10},
+                {"source": "b", "target": "t", "capacity": 10},
+                {"source": "t", "target": "f", "capacity": 30},
             ],
         },
     },
-    # Two parallel edges s→m (merge stress); then single m→t bottleneck.
-    "dinic_parallel": {
+    "CLRS Textbook (s \u2192 t, 6 nodes)": {
         "source": "s",
         "sink": "t",
         "graph": {
             "nodes": [
-                {"id": "s", "x": 50, "y": 120, "label": "s"},
-                {"id": "m", "x": 200, "y": 120, "label": "m"},
-                {"id": "t", "x": 350, "y": 120, "label": "t"},
+                {"id": "s", "x": 60, "y": 150, "label": "s"},
+                {"id": "v1", "x": 200, "y": 60, "label": "v1"},
+                {"id": "v2", "x": 200, "y": 240, "label": "v2"},
+                {"id": "v3", "x": 340, "y": 60, "label": "v3"},
+                {"id": "v4", "x": 340, "y": 240, "label": "v4"},
+                {"id": "t", "x": 480, "y": 150, "label": "t"},
             ],
             "edges": [
-                {"source": "s", "target": "m", "capacity": 4},
-                {"source": "s", "target": "m", "capacity": 6},
-                {"source": "m", "target": "t", "capacity": 8},
+                {"source": "s", "target": "v1", "capacity": 16},
+                {"source": "s", "target": "v2", "capacity": 13},
+                {"source": "v1", "target": "v2", "capacity": 4},
+                {"source": "v1", "target": "v3", "capacity": 12},
+                {"source": "v2", "target": "v1", "capacity": 4},
+                {"source": "v2", "target": "v4", "capacity": 14},
+                {"source": "v3", "target": "v2", "capacity": 9},
+                {"source": "v3", "target": "t", "capacity": 20},
+                {"source": "v4", "target": "v3", "capacity": 7},
+                {"source": "v4", "target": "t", "capacity": 4},
             ],
         },
     },
@@ -123,18 +131,22 @@ def _snapshot_graph(
     phase: str,
     running_flow: int,
     extra_legend: list[str] | None = None,
+    level: dict[str, int] | None = None,
+    show_admissible: bool = False,
 ) -> dict[str, Any]:
     nodes_spec = layout["nodes"]
     edges_out: list[dict[str, Any]] = []
     for u, v, c in originals:
         f = c - resid[u][v]
-        edges_out.append(
-            {
-                "source": u,
-                "target": v,
-                "label": f"{f}/{c}",
-            }
-        )
+        edge_info: dict[str, Any] = {
+            "source": u,
+            "target": v,
+            "label": f"{f}/{c}",
+        }
+        if show_admissible and level and u in level and v in level:
+            if level[v] == level[u] + 1 and resid[u][v] > 0:
+                edge_info["admissible"] = True
+        edges_out.append(edge_info)
     legend_items = [
         f"Phase: {phase}",
         f"Running max flow (value): {running_flow}",
@@ -189,6 +201,8 @@ def build_frames(input_data: dict[str, Any], config: dict[str, Any]) -> list[Fra
         phase: str,
         legend_extra: list[str] | None = None,
         level: dict[str, int] | None = None,
+        show_admissible: bool = False,
+        bottleneck_edge: list[str] | None = None,
     ) -> None:
         nonlocal running
         running = _max_flow_value(resid, source, originals)
@@ -205,20 +219,29 @@ def build_frames(input_data: dict[str, Any], config: dict[str, Any]) -> list[Fra
             phase=phase,
             running_flow=running,
             extra_legend=leg,
+            level=level,
+            show_admissible=show_admissible,
         )
         edge_flows = _edge_flows_from_residual(resid, originals)
+        node_levels_meta = dict(level) if level else {}
+        meta_dict: dict[str, Any] = {
+            "algorithm": "dinic",
+            "phase": phase,
+            "round": round_idx,
+            "running_max_flow": running,
+            "current_flow": running,
+            "bfs_round": round_idx,
+            "node_levels": node_levels_meta,
+            "final_state": {"max_flow": running, "edge_flows": edge_flows},
+        }
+        if bottleneck_edge:
+            meta_dict["bottleneck_edge"] = bottleneck_edge
         frames.append(
             Frame(
                 explanation=explanation,
                 graph=graph,
                 legend={"status": phase, "items": leg},
-                meta={
-                    "algorithm": "dinic",
-                    "phase": phase,
-                    "round": round_idx,
-                    "running_max_flow": running,
-                    "final_state": {"max_flow": running, "edge_flows": edge_flows},
-                },
+                meta=meta_dict,
             )
         )
 
@@ -233,6 +256,16 @@ def build_frames(input_data: dict[str, Any], config: dict[str, Any]) -> list[Fra
 
     while True:
         round_idx += 1
+
+        push_frame(
+            f"Starting BFS round {round_idx}: build level graph from source {source} "
+            f"using edges with remaining residual capacity.",
+            h_nodes=[source],
+            h_edges=[],
+            phase="bfs_start",
+            legend_extra=[f"Round {round_idx}: BFS from {source}"],
+        )
+
         # --- BFS level graph ---
         level: dict[str, int] = {source: 0}
         q: deque[str] = deque([source])
@@ -270,13 +303,21 @@ def build_frames(input_data: dict[str, Any], config: dict[str, Any]) -> list[Fra
                 frames[-1].meta["final_state"] = {"max_flow": final_flow, "edge_flows": ef}
             break
 
+        # Admissible-edge frame: highlight all edges in the level graph
+        admissible_edges: list[list[str]] = []
+        for u2, v2, _ in originals:
+            if u2 in level and v2 in level and level[v2] == level[u2] + 1 and resid[u2][v2] > 0:
+                admissible_edges.append([u2, v2])
         push_frame(
             f"BFS complete (round {round_idx}): level graph reaches {sink} at level {level[sink]}. "
-            f"Next: DFS pushes blocking flow along admissible edges (u→v only if level[v]=level[u]+1).",
+            f"Admissible edges (level[v]=level[u]+1 with residual>0) are highlighted in blue. "
+            f"Next: DFS pushes blocking flow along these edges.",
             h_nodes=[source, sink],
-            h_edges=[],
+            h_edges=admissible_edges,
             phase="bfs_done",
             level=level,
+            show_admissible=True,
+            legend_extra=[f"Admissible edges: {len(admissible_edges)}"],
         )
 
         # --- Blocking flow DFS ---
@@ -313,14 +354,28 @@ def build_frames(input_data: dict[str, Any], config: dict[str, Any]) -> list[Fra
                 break
             aug_idx += 1
             path_edges = [[path[i], path[i + 1]] for i in range(len(path) - 1)]
+            # Identify the bottleneck (minimum residual) edge on the augmenting path
+            bn_edge: list[str] | None = None
+            bn_cap = 10**18
+            for i in range(len(path) - 1):
+                pu, pv = path[i], path[i + 1]
+                orig_resid = resid[pu][pv] + add
+                if orig_resid < bn_cap:
+                    bn_cap = orig_resid
+                    bn_edge = [pu, pv]
+            bn_label = ""
+            if bn_edge:
+                bn_label = f" Bottleneck edge: {bn_edge[0]}→{bn_edge[1]} (capacity limited push to {add})."
             push_frame(
                 f"DFS blocking flow (round {round_idx}, augment #{aug_idx}): pushed {add} units along "
-                f"path {' → '.join(path)}. Residual capacities updated on this path.",
+                f"path {' → '.join(path)}. Residual capacities updated on this path.{bn_label}",
                 h_nodes=list(dict.fromkeys(path)),
                 h_edges=path_edges,
                 phase="dfs_push",
                 level=level,
+                show_admissible=True,
                 legend_extra=[f"Augment amount: {add}"],
+                bottleneck_edge=bn_edge,
             )
 
         push_frame(

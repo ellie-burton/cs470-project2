@@ -1,57 +1,34 @@
-# CS470 Project 2 - Algorithm Animations
+# CS470 Project 2 — Algorithm Animations
 
-Interactive visualizations for:
+Ellie Burton & William Mulhern
 
-- Hungarian algorithm (assignment, min/max)
-- Gale-Shapley algorithm (stable matching)
-- Dinic's algorithm (max flow)
+Streamlit web interface with interactive animations of 3 algorithms covered in CS 470.
 
-The project uses shared algorithm modules (`build_frames`, `validate_result`) and a Streamlit UI.
+## Algorithms
 
-## Requirements
+- **Hungarian** (min/max assignment) — editable cost matrix, step-by-step row/column reduction, zero identification, line covering, and optimal assignment.
+- **Gale-Shapley** (stable matching) — drag-and-drop preference rankings, dynamic add/remove participant pairs, animated proposal rounds with engagements and swaps.
+- **Dinic's** (max flow) — editable directed graph with nodes/edges/capacities, animated BFS level construction, admissible-edge highlighting, DFS blocking-flow augmentation with bottleneck identification, and running flow metric.
 
-- Python 3.10+ recommended
-- pip
+## Quick Start
 
-Install dependencies:
+Requires **Python 3.10+** and pip.
 
 ```bash
 pip install -r requirements.txt
-```
-
-## Run
-
-UI:
-
-```bash
 streamlit run streamlit_app.py
 ```
 
-## Test
-
-```bash
-python -m unittest discover -s tests -p "test_*.py"
-python scripts/demo_all.py
-```
+The app opens in your browser with three tabs, one per algorithm. Each tab has preset inputs you can select from, edit, then click **Run animation** to step through the visualization.
 
 ## Project Layout
 
-
-| Path                            | Role                                       |
-| ------------------------------- | ------------------------------------------ |
-| `streamlit_app.py`              | Main Streamlit UI (tabbed per algorithm)   |
-| `algorithms/hungarian.py`       | Hungarian frames + validation + presets    |
-| `algorithms/gale_shapley.py`    | Gale-Shapley frames + validation + presets |
-| `algorithms/dinic.py`           | Dinic frames + validation + presets        |
-| `algorithms/dummy_algorithm.py` | Small smoke/demo algorithm                 |
-| `src/models.py`                 | Shared `Frame` and `ValidationReport`      |
-| `tests/`                        | Unit tests                                 |
-| `scripts/demo_all.py`           | CLI smoke runner across all presets        |
-
-
-## Notes
-
-- Gale-Shapley tab supports dynamic participant sizing with add/remove pair controls.
-- Hungarian tab includes step-by-step matrix visuals (identify min, subtract, zero cover/lines, adjustments).
-- Dinic tab supports editable nodes/edges/capacities and animated flow phases.
-
+| Path | Description |
+|---|---|
+| `streamlit_app.py` | Main Streamlit UI — tabbed interface, input editors, graph/matrix rendering, playback controls |
+| `algorithms/hungarian.py` | Hungarian algorithm logic, frame generation, validation, presets |
+| `algorithms/gale_shapley.py` | Gale-Shapley algorithm logic, frame generation, validation, presets |
+| `algorithms/dinic.py` | Dinic's algorithm logic, frame generation, validation, presets |
+| `src/models.py` | Shared `Frame` and `ValidationReport` data classes |
+| `requirements.txt` | Python dependencies |
+| `Assignment.md` | Original assignment specification |
